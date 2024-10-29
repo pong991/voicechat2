@@ -13,6 +13,8 @@ from transformers.utils import is_flash_attn_2_available
 from typing import Union
 from urllib.parse import unquote
 
+import traceback
+
 app = FastAPI()
 
 class TranscriptionEngine(ABC):
@@ -25,7 +27,7 @@ class TransformersEngine(TranscriptionEngine):
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
         if torch.cuda.is_available():
-            device = "cuda"
+            device = "cuda:0"
             torch_dtype = torch.float16
         elif torch.backends.mps.is_available():
             device = "mps"
@@ -35,9 +37,9 @@ class TransformersEngine(TranscriptionEngine):
             torch_dtype = torch.float32
 
         # 400ms
-        model_id = "openai/whisper-large-v2"
+        # model_id = "openai/whisper-large-v2"
         # 220ms
-        model_id = "distil-whisper/large-v2"
+        model_id = "/home/scratch/data/zjp/Model/distil-whisper/large-v2"
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, 
@@ -80,7 +82,7 @@ class FasterWhisperEngine(TranscriptionEngine):
         # 300ms
         model_id = "distil-large-v3"
         
-        self.model = WhisperModel(model_id, device="cuda", compute_type="float16")
+        self.model = WhisperModel(model_id, device="cuda:0", compute_type="float16")
 
     def transcribe(self, file, audio_content, **kwargs):
         segments, _ = self.model.transcribe(unquote(file.filename), beam_size=5)
@@ -99,33 +101,95 @@ class SenseVoiceEngine(TranscriptionEngine):
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         # git clone https://huggingface.co/FunAudioLLM/SenseVoiceSmall
-        model_id = "FunAudioLLM/SenseVoiceSmall"
+        model_id = "/home/scratch/data/zjp/Model/iic/SenseVoiceSmall"
 
         self.model = AutoModel(
             model=model_id,
             vad_kwargs={"max_single_segment_time": 30000},
             device=device,
-            hub="hf",
+            disable_update=True
         )
 
 
     def transcribe(self, file, audio_content, **kwargs):
         res = self.model.generate(
-            input=unquote(file.filename),
+            input=audio_content,
             cache={},
             language="auto", # "zh", "en", "yue", "ja", "ko", "nospeech"
             use_itn=True,
             batch_size_s=60,
             merge_length_s=15,
         )
+
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
         text = rich_transcription_postprocess(res[0]["text"])
         logger.info(text)
         return text, []
 
+
+class FunasrTools:
+    """
+    python asr recognizer lib
+
+    """
+
+    def __init__(
+        self
+      
+        
+    ):
+        """
+ 
+        """
+        try:
+             
+              if FunasrTools.check_ffmpeg()==False:
+                 print("pls instal ffmpeg firest, in ubuntu, you can type apt install -y ffmpeg")
+                 exit(0)
+ 
+             
+        except Exception as e:
+            print("Exception:", e)
+            traceback.print_exc()
+    
+ 
+    # check ffmpeg installed
+    @staticmethod
+    def check_ffmpeg():
+        import subprocess
+        try:
+            subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return True
+        except FileNotFoundError:
+            
+            return False
+    # use ffmpeg to convert audio to wav
+    @staticmethod
+    def audio2wav(audiobuf):
+     try:
+      import os
+      import subprocess
+      if FunasrTools.check_ffmpeg()==False:
+         print("pls instal ffmpeg firest, in ubuntu, you can type apt install -y ffmpeg")
+         exit(0)
+         return
+ 
+      ffmpeg_target_to_outwav = ["ffmpeg", "-i", '-',  "-ac", "1", "-ar", "16000",  "-f", "wav", "pipe:1"]
+      pipe_to = subprocess.Popen(ffmpeg_target_to_outwav,
+                       stdin=subprocess.PIPE,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE)
+      wavbuf, err = pipe_to.communicate(audiobuf)
+      if str(err).find("Error")>=0 or str(err).find("Unknown")>=0 or str(err).find("Invalid")>=0:
+            print("ffmpeg err",err)
+            return None
+      return wavbuf
+     except Exception as e:
+            print("audio2wav",e)
+            return None
 
 # For shorter sentences, the regular transformers pipeline seems to be faster than faster-whisper?
 '''
@@ -136,8 +200,11 @@ except ImportError:
     engine = TransformersEngine()
     logger.info("Using TransformersEngine")
 '''
-engine = TransformersEngine()
-logger.info("Using TransformersEngine")
+# engine = TransformersEngine()
+# logger.info("Using TransformersEngine")
+
+engine = SenseVoiceEngine()
+logger.info("Using SenseVoiceEngine")
 
 
 class TranscriptionResponse(BaseModel):
@@ -174,6 +241,7 @@ async def create_translation(
     return JSONResponse(content=response, media_type="application/json")
 
 
+
 @app.post("/inference")
 async def inference(
     file: UploadFile = File(...),
@@ -183,6 +251,11 @@ async def inference(
 ):
     # Read the audio file
     audio_content = await file.read()
+
+    file_ext = file.filename.split(".")[-1].upper()
+
+    if file_ext not in ["WAV", "PCM"]:
+        audio_content = FunasrTools.audio2wav(audio_content)
 
     temperature += temperature_inc
     
