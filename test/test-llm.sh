@@ -1,9 +1,9 @@
 #!/bin/bash
 
-time curl http://localhost:8002/v1/chat/completions \
+time curl http://localhost:11434/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-3.5-turbo",
+    "model": "glm4:latest",
     "messages": [
       {
         "role": "system",
@@ -11,8 +11,9 @@ time curl http://localhost:8002/v1/chat/completions \
       },
       {
         "role": "user",
-        "content": "This is a test message. Can you reply if you have received this?"
+        "content": "你好，我是一名研一的学生，研究方向是语音合成"
       }
     ],
-    "temperature": 0.7
+    "temperature": 0.5,
+    "stream": false
   }'
