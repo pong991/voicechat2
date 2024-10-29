@@ -1,40 +1,33 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
-from TTS.api import TTS
 import librosa
 import numpy as np
 import io
 import time
 import re
 import soundfile as sf
-import torch
 
+from CosyVoice.cosyvoice.cli.cosyvoice import CosyVoice
+from CosyVoice.cosyvoice.utils.file_utils import load_wav
+import sys
+
+sys.path.append('CosyVoice/third_party/Matcha-TTS')
 
 app = FastAPI()
 
-print('Loading VITS...')
+print('Loading CosyVoice...')
 t0 = time.time()
-vits_model = 'tts_models/en/vctk/vits'
+tts_model_path = '../Model/iic/CosyVoice-300M'
 
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
-else:
-    device = "cpu"
+cosyvoice = CosyVoice(tts_model_path)
+prompt_speech_16k = load_wav('/home/scratch/data/zjp/speech/CosyVoice/zero_shot_prompt.wav', 16000)
 
-tts_vits = TTS(vits_model).to(device)
 elapsed = time.time() - t0
 print(f"Loaded in {elapsed:.2f}s")
 
 class TTSRequest(BaseModel):
     text: str
-    # Female
-    speaker: str = "p273"
-    speaker: str = "p335"
-
-    # Male
 
 @app.get("/", response_class=HTMLResponse)
 async def get_form():
@@ -48,7 +41,6 @@ async def get_form():
             <h2>TTS VITS</h2>
             <form method="post" action="/tts">
                 <textarea name="text">This is a test.</textarea>
-                <input name="speaker" value="p273" />
                 <input type="submit" />
             </form>
         </body>
@@ -59,22 +51,23 @@ async def get_form():
 async def text_to_speech(request: TTSRequest):
     try:
         # Text preprocessing
-        text = request.text.strip()
-        text = re.sub(r'~+', '!', text)
-        text = re.sub(r"\(.*?\)", "", text)
-        text = re.sub(r"(\*[^*]+\*)|(_[^_]+_)", "", text).strip()
-        text = re.sub(r'[^\x00-\x7F]+', '', text)
+        # text = request.text.strip()
+        # text = re.sub(r'~+', '!', text)
+        # text = re.sub(r"\(.*?\)", "", text)
+        # text = re.sub(r"(\*[^*]+\*)|(_[^_]+_)", "", text).strip()
+        # text = re.sub(r'[^\x00-\x7F]+', '', text)
 
         t0 = time.time()
-        wav_np = tts_vits.tts(text, speaker=request.speaker)
+        # wav_np = tts_vits.tts(text, speaker=request.speaker)
+        wav_np = cosyvoice.inference_zero_shot(request.text, '希望你以后能够做的比我还好呦。', prompt_speech_16k)
         generation_time = time.time() - t0
 
-        audio_duration = len(wav_np) / 22050  # Assuming 22050 Hz sample rate
+        audio_duration = len(wav_np['tts_speech']) / 22050  # Assuming 22050 Hz sample rate
         rtf = generation_time / audio_duration
         print(f"Generated in {generation_time:.2f}s")
         print(f"Real-Time Factor (RTF): {rtf:.2f}")
 
-        wav_np = np.array(wav_np)
+        wav_np = wav_np['tts_speech'].numpy().flatten()
         wav_np = np.clip(wav_np, -1, 1)
 
         # Resample to 24kHz
@@ -83,11 +76,14 @@ async def text_to_speech(request: TTSRequest):
 
         # Convert to Opus using an in-memory buffer
         buffer = io.BytesIO()
-        sf.write(buffer, wav_np_24k, 24000, format='ogg', subtype='opus')
-        # sf.write(buffer, wav_np, 24000, format='ogg', subtype='opus')
+        sf.write(buffer, wav_np_24k, 24000, format='OGG', subtype='OPUS')
         buffer.seek(0)
+        # 设置响应头
+        headers = {
+            "Content-Disposition": f"attachment; filename=output.opus"
+        }
 
-        return StreamingResponse(buffer, media_type="audio/ogg; codecs=opus")
+        return StreamingResponse(buffer, media_type="audio/ogg", headers=headers)
     except Exception as e:
         print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
