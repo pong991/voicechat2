@@ -2,7 +2,7 @@ aiortc
 fastapi
 uvicorn
 websockets
-coqui-tts
+#coqui-tts if you want to use coqui tts model
 loguru
 numpy
 scipy
@@ -10,7 +10,16 @@ whisperx
 python-multipart
 opuslib
 mutagen
-torch
-torchaudio
 transformers
 accelerate
+modelscope
+openai-whisper==20231117
+torch==2.5.0
+torchaudio==2.5.0
+WeTextProcessing==1.0.3
+conformer==0.3.2
+diffusers==0.27.2
+huggingface-hub==0.25.2
+gdown==5.1.0
+wget==3.2
+pyarrow==17.0.0
