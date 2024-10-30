@@ -1,6 +1,6 @@
 #!/bin/bash
 
-time curl http://localhost:11434/api/chat \
+time curl http://localhost:8002/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "model": "glm4:latest",
